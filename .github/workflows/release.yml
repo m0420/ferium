@@ -1,24 +1,16 @@
 name: Publish and Release
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Erlaubt manuelles Starten per Klick
   push:
-    tags: "*"
+    tags:
+      - "v*" # Startet automatisch, wenn du einen Tag wie "v4.7.2-unofficial" pushst
+
+# WICHTIG: Damit der Bot Releases erstellen darf
+permissions:
+  contents: write
 
 jobs:
-  crates-publish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Upload to crates.io
-        run: cargo publish
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
   gh-release:
     runs-on: ubuntu-latest
     steps:
@@ -26,97 +18,44 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Lädt die Dateien herunter, die im "Build"-Workflow erstellt wurden
       - name: Download artifacts
         uses: dawidd6/action-download-artifact@v3
         with:
-          workflow_conclusion: success
+          # Der Name der Datei muss exakt so heißen wie deine andere Workflow-Datei:
           workflow: build.yml
+          workflow_conclusion: success
+          # Sucht nach den Artefakten, die wir im Build-Schritt hochgeladen haben
+          name: binaries-.*
+          name_is_regexp: true
           path: ./out
 
-      - name: Create sha256sum for Scoop
-        run: sha256sum ./out/**/ferium-windows-msvc.zip | cut -d ' ' -f 1 > ./out/ferium-windows-msvc.zip.sha256
+      - name: Display downloaded files (Debug)
+        run: ls -R ./out
 
-      # Remove the dots for the markdown header
-      - name: MD Header
-        run: echo "MD_HEADER=$(git describe --tags --abbrev=0 | sed 's/\.//g')" >> $GITHUB_ENV
+      # Erstellt die Checksumme (Optional, aber gut zu haben)
+      - name: Create sha256sum for Windows
+        # Das "|| true" verhindert Fehler, falls die Windows Datei gerade nicht da ist
+        run: |
+          find ./out -name "ferium-windows-msvc.zip" -exec sha256sum {} \; | cut -d ' ' -f 1 > ./out/ferium-windows-msvc.zip.sha256 || true
 
-      - name: Get the latest tag
-        run: echo "TAG=$(git describe --tags --abbrev=0)" >> $GITHUB_ENV
+      - name: Get the tag name
+        id: get_tag
+        run: echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
       - name: Create release
         uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: ./out/**
+          # Lädt alles hoch, was im Ordner out/ liegt
+          files: ./out/**/*
           name: Ferium ${{ env.TAG }}
           tag_name: ${{ env.TAG }}
+          draft: false
+          prerelease: true # Markiert es als "Pre-release", da inoffiziell
           body: |
-            Compiled binaries for Ferium version `${{ env.TAG }}` ([changelog](${{ github.server_url }}/${{ github.repository }}/blob/main/CHANGELOG.md#${{ env.MD_HEADER }}))
-
-            The provided binaries are for:
-            - Linux ARM without a GUI file dialogue
-            - Linux ARM (aarch64 linux musl)
-            - Linux without a GUI file dialogue
-            - Linux (x64 linux musl)
-            - macOS Apple Silicon (aarch64 darwin)
-            - macOS Intel (x64 darwin)
-            - GNU Windows (x64 windows gnu) (i.e. Cygwin/MinGW)
-            - Windows (x64 windows msvc)
-
-            You can install ferium by downloading and unzipping the appropriate asset, and moving the executable to ~/bin or any other folder in your path.
-
-  aur-update:
-    runs-on: ubuntu-latest
-    needs: gh-release
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Get the latest tag
-        run: echo "TAG=$(git describe --tags --abbrev=0)" >> $GITHUB_ENV
-
-      - name: Update no-gui AUR package
-        uses: aksh1618/update-aur-package@v1
-        with:
-          package_name: ferium-bin
-          commit_username: "Ilesh Thiada"
-          commit_email: ileshkt@gmail.com
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-      - name: Update gui AUR package
-        uses: aksh1618/update-aur-package@v1
-        with:
-          package_name: ferium-gui-bin
-          commit_username: "Ilesh Thiada"
-          commit_email: ileshkt@gmail.com
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-
-  homebrew-update:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Get the latest tag
-        run: echo "TAG=$(git describe --tags --abbrev=0)" >> $GITHUB_ENV
-
-      - name: Update Homebrew formula
-        uses: mislav/bump-homebrew-formula-action@v3
-        with:
-          tag-name: ${{ env.TAG }}
-        env:
-          COMMITTER_TOKEN: ${{ secrets.COMMITTER_TOKEN }}
-
-  winget-update:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: vedantmgoyal9/winget-releaser@v2
-        with:
-          identifier: GorillaDevs.Ferium
-          fork-user: theRookieCoder
-          installers-regex: ferium-windows-msvc\.zip
-          token: ${{ secrets.COMMITTER_TOKEN }}
+            Unofficial Build: ${{ env.TAG }}
+            
+            Based on the original Ferium project.
+            Contains binaries for Windows, Linux, and macOS.
