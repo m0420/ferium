@@ -1,12 +1,16 @@
 name: Publish and Release
 
 on:
-  workflow_dispatch: # Erlaubt manuelles Starten per Klick
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: 'Version Tag (z.B. v4.7.2-unofficial)'
+        required: true
+        default: 'v4.7.2-unofficial'
   push:
     tags:
-      - "v*" # Startet automatisch, wenn du einen Tag wie "v4.7.2-unofficial" pushst
+      - "v*"
 
-# WICHTIG: Damit der Bot Releases erstellen darf
 permissions:
   contents: write
 
@@ -18,42 +22,40 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Lädt die Dateien herunter, die im "Build"-Workflow erstellt wurden
       - name: Download artifacts
         uses: dawidd6/action-download-artifact@v3
         with:
-          # Der Name der Datei muss exakt so heißen wie deine andere Workflow-Datei:
           workflow: build.yml
           workflow_conclusion: success
-          # Sucht nach den Artefakten, die wir im Build-Schritt hochgeladen haben
           name: binaries-.*
           name_is_regexp: true
           path: ./out
 
-      - name: Display downloaded files (Debug)
-        run: ls -R ./out
-
-      # Erstellt die Checksumme (Optional, aber gut zu haben)
       - name: Create sha256sum for Windows
-        # Das "|| true" verhindert Fehler, falls die Windows Datei gerade nicht da ist
         run: |
           find ./out -name "ferium-windows-msvc.zip" -exec sha256sum {} \; | cut -d ' ' -f 1 > ./out/ferium-windows-msvc.zip.sha256 || true
 
-      - name: Get the tag name
-        id: get_tag
-        run: echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+      # HIER IST DER FIX:
+      # Wir prüfen: Wurde es manuell gestartet? Dann nimm den Input.
+      # Wurde es durch einen Tag-Push gestartet? Dann nimm den Git-Ref.
+      - name: Determine Tag Name
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "TAG=${{ github.event.inputs.version_tag }}" >> $GITHUB_ENV
+          else
+            echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          fi
 
       - name: Create release
         uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Lädt alles hoch, was im Ordner out/ liegt
           files: ./out/**/*
           name: Ferium ${{ env.TAG }}
           tag_name: ${{ env.TAG }}
           draft: false
-          prerelease: true # Markiert es als "Pre-release", da inoffiziell
+          prerelease: true
           body: |
             Unofficial Build: ${{ env.TAG }}
             
